@@ -11,9 +11,11 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QProgressBar,
@@ -36,6 +38,10 @@ def format_status_summary(result: SyncCycleResult) -> str:
         f"Synced {result.synced_files} | "
         f"Failed {result.failed_files}"
     )
+
+
+def format_source_directory_summary(source_directories: list[str]) -> str:
+    return "; ".join(source_directories)
 
 
 class SyncController(QObject):
@@ -157,13 +163,36 @@ class MainWindow(QMainWindow):
 
         settings_group = QGroupBox("Settings")
         settings_layout = QFormLayout(settings_group)
-        self.source_info_value = QLabel("10.55.2.104:/home/wei.li as wei.li")
-        self.destination_info_value = QLabel("10.71.1.3:/home/tsl as tsl")
+        self.source_host_edit = QLineEdit()
+        self.source_user_edit = QLineEdit()
+        self.source_directories_list = QListWidget()
+        self.add_source_dir_button = QPushButton("Add")
+        self.edit_source_dir_button = QPushButton("Edit")
+        self.remove_source_dir_button = QPushButton("Remove")
+        source_dirs_controls = QHBoxLayout()
+        source_dirs_controls.addWidget(self.add_source_dir_button)
+        source_dirs_controls.addWidget(self.edit_source_dir_button)
+        source_dirs_controls.addWidget(self.remove_source_dir_button)
+        source_dirs_container = QWidget()
+        source_dirs_layout = QVBoxLayout(source_dirs_container)
+        source_dirs_layout.setContentsMargins(0, 0, 0, 0)
+        source_dirs_layout.addWidget(self.source_directories_list)
+        source_dirs_layout.addLayout(source_dirs_controls)
+        self.destination_host_edit = QLineEdit()
+        self.destination_user_edit = QLineEdit()
+        self.destination_password_edit = QLineEdit()
+        self.destination_password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.destination_path_edit = QLineEdit()
         self.poll_interval_spinbox = QSpinBox()
         self.poll_interval_spinbox.setRange(1, 3600)
         self.local_cache_edit = QLineEdit()
-        settings_layout.addRow("Source", self.source_info_value)
-        settings_layout.addRow("Destination", self.destination_info_value)
+        settings_layout.addRow("Source Host", self.source_host_edit)
+        settings_layout.addRow("Source User", self.source_user_edit)
+        settings_layout.addRow("Source Directories", source_dirs_container)
+        settings_layout.addRow("Destination Host", self.destination_host_edit)
+        settings_layout.addRow("Destination User", self.destination_user_edit)
+        settings_layout.addRow("Destination Password", self.destination_password_edit)
+        settings_layout.addRow("Destination Root", self.destination_path_edit)
         settings_layout.addRow("Poll Interval (s)", self.poll_interval_spinbox)
         settings_layout.addRow("Local Cache", self.local_cache_edit)
 
@@ -191,6 +220,9 @@ class MainWindow(QMainWindow):
         self.stop_button.clicked.connect(self._stop_monitoring)
         self.rescan_button.clicked.connect(self._rescan_now)
         self.open_folder_button.clicked.connect(self._open_local_folder)
+        self.add_source_dir_button.clicked.connect(self._add_source_directory)
+        self.edit_source_dir_button.clicked.connect(self._edit_source_directory)
+        self.remove_source_dir_button.clicked.connect(self._remove_source_directory)
         self._set_running_state(False)
 
     def _build_service(
@@ -205,19 +237,31 @@ class MainWindow(QMainWindow):
         )
 
     def _load_settings_into_form(self) -> None:
+        self.source_host_edit.setText(self.settings.source_host)
+        self.source_user_edit.setText(self.settings.source_user)
+        self.source_directories_list.clear()
+        for source_directory in self.settings.source_directories:
+            self.source_directories_list.addItem(source_directory)
+        self.destination_host_edit.setText(self.settings.destination_host)
+        self.destination_user_edit.setText(self.settings.destination_user)
+        self.destination_password_edit.setText(self.settings.destination_password)
+        self.destination_path_edit.setText(self.settings.destination_path)
         self.poll_interval_spinbox.setValue(self.settings.poll_interval_seconds)
         self.local_cache_edit.setText(str(self.settings.local_cache_dir))
 
     def _current_settings_from_form(self) -> AppSettings:
         local_cache_dir = Path(self.local_cache_edit.text().strip())
         return AppSettings(
-            source_host=self.settings.source_host,
-            source_user=self.settings.source_user,
-            source_path=self.settings.source_path,
-            destination_host=self.settings.destination_host,
-            destination_user=self.settings.destination_user,
-            destination_password=self.settings.destination_password,
-            destination_path=self.settings.destination_path,
+            source_host=self.source_host_edit.text().strip(),
+            source_user=self.source_user_edit.text().strip(),
+            source_directories=[
+                self.source_directories_list.item(index).text()
+                for index in range(self.source_directories_list.count())
+            ],
+            destination_host=self.destination_host_edit.text().strip(),
+            destination_user=self.destination_user_edit.text().strip(),
+            destination_password=self.destination_password_edit.text(),
+            destination_path=self.destination_path_edit.text().strip(),
             poll_interval_seconds=self.poll_interval_spinbox.value(),
             local_cache_dir=local_cache_dir,
             app_data_dir=self.settings.app_data_dir,
@@ -227,6 +271,24 @@ class MainWindow(QMainWindow):
         local_cache = self.local_cache_edit.text().strip()
         if not local_cache:
             QMessageBox.warning(self, "Missing Cache Path", "Local cache path cannot be empty.")
+            return None
+        if not self.source_host_edit.text().strip():
+            QMessageBox.warning(self, "Missing Source Host", "Source host cannot be empty.")
+            return None
+        if not self.source_user_edit.text().strip():
+            QMessageBox.warning(self, "Missing Source User", "Source user cannot be empty.")
+            return None
+        if self.source_directories_list.count() == 0:
+            QMessageBox.warning(self, "Missing Source Directories", "Add at least one source directory.")
+            return None
+        if not self.destination_host_edit.text().strip():
+            QMessageBox.warning(self, "Missing Destination Host", "Destination host cannot be empty.")
+            return None
+        if not self.destination_user_edit.text().strip():
+            QMessageBox.warning(self, "Missing Destination User", "Destination user cannot be empty.")
+            return None
+        if not self.destination_path_edit.text().strip():
+            QMessageBox.warning(self, "Missing Destination Root", "Destination root cannot be empty.")
             return None
         self.settings = self._current_settings_from_form()
         self.settings_store.save(self.settings)
@@ -320,3 +382,33 @@ class MainWindow(QMainWindow):
             return
         self.progress_bar.setRange(0, total)
         self.progress_bar.setValue(transferred)
+
+    @Slot()
+    def _add_source_directory(self) -> None:
+        source_directory, accepted = QInputDialog.getText(
+            self,
+            "Add Source Directory",
+            "Source directory",
+        )
+        if accepted and source_directory.strip():
+            self.source_directories_list.addItem(source_directory.strip())
+
+    @Slot()
+    def _edit_source_directory(self) -> None:
+        current_item = self.source_directories_list.currentItem()
+        if current_item is None:
+            return
+        updated_directory, accepted = QInputDialog.getText(
+            self,
+            "Edit Source Directory",
+            "Source directory",
+            text=current_item.text(),
+        )
+        if accepted and updated_directory.strip():
+            current_item.setText(updated_directory.strip())
+
+    @Slot()
+    def _remove_source_directory(self) -> None:
+        current_row = self.source_directories_list.currentRow()
+        if current_row >= 0:
+            self.source_directories_list.takeItem(current_row)

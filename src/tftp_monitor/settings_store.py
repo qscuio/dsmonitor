@@ -16,6 +16,8 @@ class SettingsStore:
             return AppSettings.default(self.path.parent)
 
         payload = json.loads(self.path.read_text(encoding="utf-8"))
+        payload.setdefault("source_directories", AppSettings.default(self.path.parent).source_directories)
+        payload.pop("source_path", None)
         payload["local_cache_dir"] = Path(payload["local_cache_dir"])
         payload["app_data_dir"] = Path(payload["app_data_dir"])
         return AppSettings(**payload)

@@ -10,19 +10,19 @@ import paramiko
 from .manifest_store import ManifestStore
 from .models import AppSettings, FileRecord, RemoteFile, SyncCycleResult, SyncEvent
 from .pathing import build_destination_path, build_local_cache_path
-from .sync_logic import apply_successful_sync, select_files_to_sync
+from .sync_logic import apply_successful_sync, build_sync_plan
 
 ProgressCallback = Callable[[int, int], None]
 EventCallback = Callable[[SyncEvent], None]
 
 
 class SourceGateway(Protocol):
-    def scan(self, root_path: str) -> dict[str, RemoteFile]:
+    def scan(self, source_directory: str) -> dict[str, RemoteFile]:
         ...
 
     def download(
         self,
-        root_path: str,
+        source_directory: str,
         remote_file: RemoteFile,
         local_path: Path,
         progress: ProgressCallback,
@@ -45,18 +45,18 @@ class ParamikoSourceGateway:
     def __init__(self, settings: AppSettings) -> None:
         self.settings = settings
 
-    def scan(self, root_path: str) -> dict[str, RemoteFile]:
+    def scan(self, source_directory: str) -> dict[str, RemoteFile]:
         client = _open_client(self.settings.source_host, self.settings.source_user, None)
         sftp = client.open_sftp()
         try:
-            return _scan_remote_tree(sftp, root_path)
+            return _scan_remote_tree(sftp, source_directory)
         finally:
             sftp.close()
             client.close()
 
     def download(
         self,
-        root_path: str,
+        source_directory: str,
         remote_file: RemoteFile,
         local_path: Path,
         progress: ProgressCallback,
@@ -65,7 +65,7 @@ class ParamikoSourceGateway:
         sftp = client.open_sftp()
         try:
             local_path.parent.mkdir(parents=True, exist_ok=True)
-            remote_path = build_destination_path(root_path, remote_file.relative_path)
+            remote_path = build_destination_path(source_directory, remote_file.relative_path)
             sftp.get(remote_path, str(local_path), callback=progress)
         finally:
             sftp.close()
@@ -90,7 +90,7 @@ class ParamikoDestinationGateway:
         )
         sftp = client.open_sftp()
         try:
-            remote_path = build_destination_path(destination_root, remote_file.relative_path)
+            remote_path = build_destination_path(destination_root, remote_file.destination_relative_path)
             _ensure_remote_directories(sftp, str(PurePosixPath(remote_path).parent))
             sftp.put(str(local_path), remote_path, callback=progress)
         finally:
@@ -113,8 +113,16 @@ class SshSyncService:
         self.destination_gateway = destination_gateway or ParamikoDestinationGateway(settings)
         self.event_callback = event_callback or (lambda event: None)
 
-    def scan_source(self) -> dict[str, RemoteFile]:
-        return self.source_gateway.scan(self.settings.source_path)
+    def scan_source(self) -> list[RemoteFile]:
+        remote_files: list[RemoteFile] = []
+        for source_directory in self.settings.source_directories:
+            self._emit(
+                "scan_directory",
+                f"Scanning {source_directory}",
+                activity="scanning",
+            )
+            remote_files.extend(self.source_gateway.scan(source_directory).values())
+        return remote_files
 
     def download_file(
         self,
@@ -122,7 +130,7 @@ class SshSyncService:
         local_path: Path,
         progress: ProgressCallback,
     ) -> None:
-        self.source_gateway.download(self.settings.source_path, remote_file, local_path, progress)
+        self.source_gateway.download(remote_file.source_directory, remote_file, local_path, progress)
 
     def upload_file(
         self,
@@ -152,28 +160,47 @@ class SshSyncService:
             return result
 
         result.scanned_files = len(remote_files)
-        changed_files = select_files_to_sync(remote_files, manifest)
-        result.changed_files = len(changed_files)
+        plan = build_sync_plan(remote_files, manifest)
+        result.changed_files = len(plan.selected)
 
-        for remote_file in changed_files:
-            local_path = build_local_cache_path(self.settings.local_cache_dir, remote_file.relative_path)
-            result.current_file = remote_file.relative_path
+        for skipped in plan.skipped_conflicts:
+            winner = next(
+                item for item in plan.selected
+                if item.destination_relative_path == skipped.destination_relative_path
+            )
+            self._emit(
+                "file_conflict",
+                (
+                    f"Conflict on {skipped.destination_relative_path}: "
+                    f"chose {winner.source_directory}/{winner.relative_path} "
+                    f"over {skipped.source_directory}/{skipped.relative_path}"
+                ),
+                activity="scanning",
+                current_file=skipped.destination_relative_path,
+            )
+
+        for remote_file in plan.selected:
+            local_path = build_local_cache_path(
+                self.settings.local_cache_dir,
+                remote_file.destination_relative_path,
+            )
+            result.current_file = remote_file.destination_relative_path
             downloaded = False
             try:
                 self._emit(
                     "file_changed",
-                    f"Syncing {remote_file.relative_path}",
+                    f"Syncing {remote_file.destination_relative_path}",
                     activity="downloading",
-                    current_file=remote_file.relative_path,
+                    current_file=remote_file.destination_relative_path,
                 )
                 self.download_file(
                     remote_file,
                     local_path,
                     lambda done, total: self._emit(
                         "download_progress",
-                        f"Downloading {remote_file.relative_path}",
+                        f"Downloading {remote_file.destination_relative_path}",
                         activity="downloading",
-                        current_file=remote_file.relative_path,
+                        current_file=remote_file.destination_relative_path,
                         bytes_transferred=done,
                         total_bytes=total,
                     ),
@@ -184,9 +211,9 @@ class SshSyncService:
                     remote_file,
                     lambda done, total: self._emit(
                         "upload_progress",
-                        f"Uploading {remote_file.relative_path}",
+                        f"Uploading {remote_file.destination_relative_path}",
                         activity="uploading",
-                        current_file=remote_file.relative_path,
+                        current_file=remote_file.destination_relative_path,
                         bytes_transferred=done,
                         total_bytes=total,
                     ),
@@ -196,15 +223,17 @@ class SshSyncService:
                 result.synced_files += 1
                 self._emit(
                     "file_synced",
-                    f"Synced {remote_file.relative_path}",
+                    f"Synced {remote_file.destination_relative_path}",
                     activity="idle",
-                    current_file=remote_file.relative_path,
+                    current_file=remote_file.destination_relative_path,
                 )
             except Exception as exc:
                 result.failed_files += 1
                 result.last_error = str(exc)
-                manifest[remote_file.relative_path] = FileRecord(
-                    relative_path=remote_file.relative_path,
+                manifest[remote_file.destination_relative_path] = FileRecord(
+                    destination_relative_path=remote_file.destination_relative_path,
+                    source_directory=remote_file.source_directory,
+                    source_relative_path=remote_file.relative_path,
                     size=remote_file.size,
                     modified_time=remote_file.modified_time,
                     download_status="synced" if downloaded else "failed",
@@ -213,9 +242,9 @@ class SshSyncService:
                 self.manifest_store.save(manifest)
                 self._emit(
                     "file_failed",
-                    f"Failed to sync {remote_file.relative_path}: {exc}",
+                    f"Failed to sync {remote_file.destination_relative_path}: {exc}",
                     activity="error",
-                    current_file=remote_file.relative_path,
+                    current_file=remote_file.destination_relative_path,
                 )
 
         result.activity = "idle" if result.failed_files == 0 else "error"
@@ -275,7 +304,9 @@ def _scan_remote_tree(sftp: paramiko.SFTPClient, root_path: str) -> dict[str, Re
                 stack.append((entry_path, entry_relative))
             elif S_ISREG(entry.st_mode):
                 snapshot[entry_relative] = RemoteFile(
+                    source_directory=root_path,
                     relative_path=entry_relative,
+                    destination_relative_path=entry_relative,
                     size=entry.st_size,
                     modified_time=float(entry.st_mtime),
                 )

@@ -11,7 +11,7 @@ TransferStatus = Literal["pending", "synced", "failed"]
 class AppSettings:
     source_host: str
     source_user: str
-    source_path: str
+    source_directories: list[str]
     destination_host: str
     destination_user: str
     destination_password: str
@@ -26,7 +26,7 @@ class AppSettings:
         return cls(
             source_host="10.55.2.104",
             source_user="wei.li",
-            source_path="/home/wei.li",
+            source_directories=["/tftpboot", "/home/wei.li"],
             destination_host="10.71.1.3",
             destination_user="tsl",
             destination_password="tsl",
@@ -39,7 +39,9 @@ class AppSettings:
 
 @dataclass(slots=True)
 class FileRecord:
-    relative_path: str
+    destination_relative_path: str
+    source_directory: str
+    source_relative_path: str
     size: int
     modified_time: float
     download_status: TransferStatus
@@ -48,7 +50,9 @@ class FileRecord:
 
 @dataclass(slots=True)
 class RemoteFile:
+    source_directory: str
     relative_path: str
+    destination_relative_path: str
     size: int
     modified_time: float
 
@@ -72,3 +76,9 @@ class SyncEvent:
     current_file: str = ""
     bytes_transferred: int = 0
     total_bytes: int = 0
+
+
+@dataclass(slots=True)
+class SyncPlan:
+    selected: list[RemoteFile]
+    skipped_conflicts: list[RemoteFile]
