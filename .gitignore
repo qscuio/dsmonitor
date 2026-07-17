@@ -6,3 +6,11 @@ build/
 dist/
 *.egg-info/
 *.spec
+.pnpm-store/
+.codex/
+.agents/
+devspace-private-hardening/
+tools/
+dxdiag_display.txt
+fix-10-71-routes.ps1
+list_modes.cs
