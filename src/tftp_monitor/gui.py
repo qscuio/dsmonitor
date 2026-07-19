@@ -1254,7 +1254,7 @@ class MainWindow(QMainWindow):
         monitor_panel_title.setObjectName("SectionTitle")
         monitor_layout = QFormLayout()
         self.source_file_edit = QLineEdit()
-        self.source_file_edit.setPlaceholderText("/tftpboot/a.x, /tftpboot/b.x, or /tftpboot")
+        self.source_file_edit.setPlaceholderText("/tftpboot/*.x, /tftpboot/V8500*, /tftpboot/a.x, or /tftpboot")
         self.source_file_completion_model = QStringListModel(self)
         self.source_file_completer = QCompleter(self.source_file_completion_model, self)
         self.source_file_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
@@ -1420,7 +1420,7 @@ class MainWindow(QMainWindow):
 
         reverse_form = QFormLayout()
         self.reverse_source_file_edit = QLineEdit()
-        self.reverse_source_file_edit.setPlaceholderText("/home/tsl/a.x, /home/tsl/b.x, or /home/tsl")
+        self.reverse_source_file_edit.setPlaceholderText("/home/tsl/*.x, /home/tsl/V8500*, /home/tsl/a.x, or /home/tsl")
         self.reverse_source_completion_model = QStringListModel(self)
         self.reverse_source_completer = QCompleter(self.reverse_source_completion_model, self)
         self.reverse_source_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)

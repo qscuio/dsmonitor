@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import shlex
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -31,6 +32,12 @@ class RemoteDirectoryEntry:
 class ManualTransferResult:
     local_path: Path
     remote_path: str
+
+
+@dataclass(slots=True, frozen=True)
+class GlobMonitorPath:
+    directory: str
+    pattern: str
 
 
 class SourceGateway(Protocol):
@@ -172,12 +179,17 @@ class SshSyncService:
         remote_files: list[RemoteFile] = []
         source_paths = self.settings.source_files or self.settings.source_directories
         for source_path in source_paths:
+            glob_path = parse_glob_monitor_path(source_path)
+            scan_path = glob_path.directory if glob_path is not None else source_path
             self._emit(
                 "scan_directory",
                 f"Scanning {source_path}",
                 activity="scanning",
             )
-            remote_files.extend(self.source_gateway.scan(source_path).values())
+            scanned_files = self.source_gateway.scan(scan_path)
+            if glob_path is not None:
+                scanned_files = filter_remote_files_by_glob(scanned_files, glob_path.pattern)
+            remote_files.extend(scanned_files.values())
         return remote_files
 
     def download_file(
@@ -501,6 +513,29 @@ def _scan_remote_file(sftp: paramiko.SFTPClient, source_file: str) -> dict[str, 
             size=attrs.st_size,
             modified_time=float(attrs.st_mtime),
         )
+    }
+
+
+def parse_glob_monitor_path(source_path: str) -> GlobMonitorPath | None:
+    path = PurePosixPath(source_path.strip())
+    name_pattern = path.name
+    if not any(marker in name_pattern for marker in ("*", "?", "[")):
+        return None
+    parent = str(path.parent)
+    if not parent or parent == ".":
+        parent = "/"
+    return GlobMonitorPath(directory=parent, pattern=name_pattern)
+
+
+def filter_remote_files_by_glob(
+    remote_files: dict[str, RemoteFile],
+    pattern: str,
+) -> dict[str, RemoteFile]:
+    return {
+        key: remote_file
+        for key, remote_file in remote_files.items()
+        if fnmatch.fnmatchcase(PurePosixPath(remote_file.relative_path).name, pattern)
+        or fnmatch.fnmatchcase(remote_file.relative_path, pattern)
     }
 
 

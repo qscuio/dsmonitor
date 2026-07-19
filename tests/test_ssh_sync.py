@@ -9,6 +9,7 @@ from tftp_monitor.ssh_sync import (
     _build_auth_options,
     _build_remote_directory_entries,
     _list_remote_directory_with_find,
+    parse_glob_monitor_path,
     _scan_remote_file,
     _scan_remote_tree,
     copy_destination_to_source,
@@ -394,6 +395,122 @@ def test_sync_once_scans_only_configured_source_files(tmp_path: Path) -> None:
     assert result.scanned_files == 1
     assert result.synced_files == 1
     assert destination.uploads == [(settings.local_cache_dir / "image.bin", "/home/tsl")]
+
+
+def test_sync_once_supports_glob_monitor_path(tmp_path: Path) -> None:
+    app_data_dir = tmp_path / "appdata"
+    settings = AppSettings.default(app_data_dir)
+    settings.source_files = ["/tftpboot/*.x"]
+    manifest_store = ManifestStore(app_data_dir / "manifest.json")
+    manifest_store.save(
+        {
+            "existing.bin": FileRecord(
+                destination_relative_path="existing.bin",
+                source_directory="/tftpboot",
+                source_relative_path="existing.bin",
+                size=1,
+                modified_time=1,
+                download_status="synced",
+                upload_status="synced",
+            )
+        }
+    )
+    source = FakeMultiSourceGateway(
+        {
+            "/tftpboot": {
+                "V8888_dev.x": RemoteFile(
+                    source_directory="/tftpboot",
+                    relative_path="V8888_dev.x",
+                    destination_relative_path="V8888_dev.x",
+                    size=42,
+                    modified_time=456,
+                ),
+                "V8500_SFU.6.10.x": RemoteFile(
+                    source_directory="/tftpboot",
+                    relative_path="V8500_SFU.6.10.x",
+                    destination_relative_path="V8500_SFU.6.10.x",
+                    size=43,
+                    modified_time=457,
+                ),
+                "notes.txt": RemoteFile(
+                    source_directory="/tftpboot",
+                    relative_path="notes.txt",
+                    destination_relative_path="notes.txt",
+                    size=10,
+                    modified_time=20,
+                ),
+            },
+        }
+    )
+    destination = FakeDestinationGateway()
+    service = SshSyncService(settings, manifest_store, source, destination)
+
+    result = service.sync_once()
+
+    assert source.scan_calls == ["/tftpboot"]
+    assert result.scanned_files == 2
+    assert result.synced_files == 2
+    assert set(destination.uploads) == {
+        (settings.local_cache_dir / "V8888_dev.x", "/home/tsl"),
+        (settings.local_cache_dir / "V8500_SFU.6.10.x", "/home/tsl"),
+    }
+
+
+def test_sync_once_supports_prefix_glob_monitor_path(tmp_path: Path) -> None:
+    app_data_dir = tmp_path / "appdata"
+    settings = AppSettings.default(app_data_dir)
+    settings.source_files = ["/tftpboot/V8500*"]
+    manifest_store = ManifestStore(app_data_dir / "manifest.json")
+    manifest_store.save(
+        {
+            "existing.bin": FileRecord(
+                destination_relative_path="existing.bin",
+                source_directory="/tftpboot",
+                source_relative_path="existing.bin",
+                size=1,
+                modified_time=1,
+                download_status="synced",
+                upload_status="synced",
+            )
+        }
+    )
+    source = FakeMultiSourceGateway(
+        {
+            "/tftpboot": {
+                "V8888_dev.x": RemoteFile(
+                    source_directory="/tftpboot",
+                    relative_path="V8888_dev.x",
+                    destination_relative_path="V8888_dev.x",
+                    size=42,
+                    modified_time=456,
+                ),
+                "V8500_SFU.6.10.x": RemoteFile(
+                    source_directory="/tftpboot",
+                    relative_path="V8500_SFU.6.10.x",
+                    destination_relative_path="V8500_SFU.6.10.x",
+                    size=43,
+                    modified_time=457,
+                ),
+            },
+        }
+    )
+    destination = FakeDestinationGateway()
+    service = SshSyncService(settings, manifest_store, source, destination)
+
+    result = service.sync_once()
+
+    assert source.scan_calls == ["/tftpboot"]
+    assert result.scanned_files == 1
+    assert result.synced_files == 1
+    assert destination.uploads == [(settings.local_cache_dir / "V8500_SFU.6.10.x", "/home/tsl")]
+
+
+def test_parse_glob_monitor_path_uses_parent_directory_and_name_pattern() -> None:
+    assert parse_glob_monitor_path("/tftpboot/*.x").directory == "/tftpboot"
+    assert parse_glob_monitor_path("/tftpboot/*.x").pattern == "*.x"
+    assert parse_glob_monitor_path("/tftpboot/V8500*").directory == "/tftpboot"
+    assert parse_glob_monitor_path("/tftpboot/V8500*").pattern == "V8500*"
+    assert parse_glob_monitor_path("/tftpboot/V8888_dev.x") is None
 
 
 def test_sync_once_emits_file_state_for_source_local_and_destination(tmp_path: Path) -> None:

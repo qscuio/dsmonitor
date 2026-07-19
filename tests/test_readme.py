@@ -10,7 +10,9 @@ def test_readme_mentions_bidirectional_file_and_directory_monitoring() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
     assert "/tftpboot" in readme
     assert "Reverse Monitor" in readme
-    assert "files or directories" in readme
+    assert "files, wildcard patterns, or directories" in readme
+    assert "/tftpboot/*.x" in readme
+    assert "/tftpboot/V8500*" in readme
     assert "commas, semicolons, or new lines" in readme
     assert "nested subdirectories" in readme
     assert "unrelated files" in readme

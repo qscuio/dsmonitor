@@ -179,6 +179,25 @@ def test_monitor_path_input_supports_multiple_comma_separated_files(tmp_path: Pa
     close_window(window)
 
 
+def test_monitor_path_input_preserves_wildcard_paths(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        settings_store=SettingsStore(tmp_path / "settings.json"),
+        manifest_store=ManifestStore(tmp_path / "manifest.json"),
+    )
+
+    window.source_file_edit.setText("/tftpboot/*.x, /tftpboot/V8500*")
+    window.reverse_source_file_edit.setText("/home/tsl/*.x; /home/tsl/V8500*")
+
+    settings = window._current_settings_from_form()
+    reverse_settings = window._reverse_monitor_settings_from_form()
+
+    assert settings.source_files == ["/tftpboot/*.x", "/tftpboot/V8500*"]
+    assert reverse_settings.source_files == ["/home/tsl/*.x", "/home/tsl/V8500*"]
+
+    close_window(window)
+
+
 def test_main_window_exposes_remote_source_file_browser(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = MainWindow(

@@ -6,7 +6,7 @@ Desktop GUI app for monitoring files or whole directories between `wei.li@10.55.
 
 - Source host: `10.55.2.104`
 - Source user: `wei.li`
-- Monitor path: choose one or more files or directories to watch, such as `/tftpboot/V8888_dev.x, /tftpboot/V8500_SFU.6.10.x` or `/tftpboot`
+- Monitor path: choose one or more files, wildcard patterns, or directories to watch, such as `/tftpboot/*.x, /tftpboot/V8500*`, `/tftpboot/V8888_dev.x`, or `/tftpboot`
 - Destination: `tsl@10.71.1.3:/home/tsl`
 - Reverse monitor source: `tsl@10.71.1.3:/home/tsl`
 - Reverse destination: `wei.li@10.55.2.104:/tftpboot`
@@ -39,7 +39,8 @@ The packaged executable is created as a single file at `dist\dsmonitor.exe`.
 
 - The Monitor tab watches `10.55.2.104` and sends changed files to `10.71.1.3`
 - The Reverse Monitor tab watches `10.71.1.3` and sends changed files to `10.55.2.104`
-- Use the Monitor Path input to choose remote files or directories; separate multiple paths with commas, semicolons, or new lines
+- Use the Monitor Path input to choose remote files, wildcard patterns, or directories; separate multiple paths with commas, semicolons, or new lines
+- Wildcard monitor paths like `/tftpboot/*.x` or `/tftpboot/V8500*` scan the parent directory and sync only matching files
 - `Use Folder` appends the currently listed directory to the Monitor Path input
 - When a directory is monitored, files under nested subdirectories are scanned recursively
 - The status panel shows source, local cache, and `10.71.1.3` target path, modified time, and file size
