@@ -510,7 +510,58 @@ def test_parse_glob_monitor_path_uses_parent_directory_and_name_pattern() -> Non
     assert parse_glob_monitor_path("/tftpboot/*.x").pattern == "*.x"
     assert parse_glob_monitor_path("/tftpboot/V8500*").directory == "/tftpboot"
     assert parse_glob_monitor_path("/tftpboot/V8500*").pattern == "V8500*"
+    assert parse_glob_monitor_path(r"/tftpboot/M4000\_x\*").directory == "/tftpboot"
+    assert parse_glob_monitor_path(r"/tftpboot/M4000\_x\*").pattern == "M4000_x*"
     assert parse_glob_monitor_path("/tftpboot/V8888_dev.x") is None
+
+
+def test_sync_once_unescapes_common_markdown_glob_characters(tmp_path: Path) -> None:
+    app_data_dir = tmp_path / "appdata"
+    settings = AppSettings.default(app_data_dir)
+    settings.source_files = [r"/tftpboot/M4000\_x\*"]
+    manifest_store = ManifestStore(app_data_dir / "manifest.json")
+    manifest_store.save(
+        {
+            "existing.bin": FileRecord(
+                destination_relative_path="existing.bin",
+                source_directory="/tftpboot",
+                source_relative_path="existing.bin",
+                size=1,
+                modified_time=1,
+                download_status="synced",
+                upload_status="synced",
+            )
+        }
+    )
+    source = FakeMultiSourceGateway(
+        {
+            "/tftpboot": {
+                "M4000_x_debug.x": RemoteFile(
+                    source_directory="/tftpboot",
+                    relative_path="M4000_x_debug.x",
+                    destination_relative_path="M4000_x_debug.x",
+                    size=42,
+                    modified_time=456,
+                ),
+                "M4000_y_debug.x": RemoteFile(
+                    source_directory="/tftpboot",
+                    relative_path="M4000_y_debug.x",
+                    destination_relative_path="M4000_y_debug.x",
+                    size=43,
+                    modified_time=457,
+                ),
+            },
+        }
+    )
+    destination = FakeDestinationGateway()
+    service = SshSyncService(settings, manifest_store, source, destination)
+
+    result = service.sync_once()
+
+    assert source.scan_calls == ["/tftpboot"]
+    assert result.scanned_files == 1
+    assert result.synced_files == 1
+    assert destination.uploads == [(settings.local_cache_dir / "M4000_x_debug.x", "/home/tsl")]
 
 
 def test_sync_once_emits_file_state_for_source_local_and_destination(tmp_path: Path) -> None:

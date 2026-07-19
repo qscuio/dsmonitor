@@ -518,13 +518,19 @@ def _scan_remote_file(sftp: paramiko.SFTPClient, source_file: str) -> dict[str, 
 
 def parse_glob_monitor_path(source_path: str) -> GlobMonitorPath | None:
     path = PurePosixPath(source_path.strip())
-    name_pattern = path.name
+    name_pattern = unescape_glob_pattern(path.name)
     if not any(marker in name_pattern for marker in ("*", "?", "[")):
         return None
     parent = str(path.parent)
     if not parent or parent == ".":
         parent = "/"
     return GlobMonitorPath(directory=parent, pattern=name_pattern)
+
+
+def unescape_glob_pattern(pattern: str) -> str:
+    for character in ("*", "?", "[", "]", "_"):
+        pattern = pattern.replace(f"\\{character}", character)
+    return pattern
 
 
 def filter_remote_files_by_glob(
